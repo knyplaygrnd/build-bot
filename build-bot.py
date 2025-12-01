@@ -227,22 +227,22 @@ def main():
 
     regex = re.compile(r"\[\s*(\d+%)\s+(\d+/\d+)(?: (.*?remaining))?.*\]")
     last_update = 0
+    ninja_started = False
 
     # Build Loop
     for log_line in process.stdout:
         sys.stdout.write(log_line)
         log_file.write(log_line)
 
+        if "Starting ninja..." in log_line:
+            ninja_started = True
+
         match = regex.search(log_line)
         if match:
-            pct, cnt, time_left = match.groups()
-
-            try:
-                total_steps = int(cnt.split("/")[1])
-                if total_steps < 90:
-                    continue
-            except ValueError:
+            if not ninja_started:
                 continue
+
+            pct, cnt, time_left = match.groups()
 
             now = time.time()
             if now - last_update > 20:
