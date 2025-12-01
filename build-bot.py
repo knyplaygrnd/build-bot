@@ -278,11 +278,15 @@ def main():
     regex = re.compile(r"\[\s*(\d+%)\s+(\d+/\d+)(?: (.*?remaining))?.*\]")
     last_update = 0
     ninja_started = False
+    detected_zip = None
 
     try:
         for log_line in BUILD_PROCESS.stdout:
             sys.stdout.write(log_line)
             log_file.write(log_line)
+
+            if "Package Complete:" in log_line:
+                detected_zip = log_line.split("Package Complete:")[1].strip().split()[0]
 
             if "Starting ninja..." in log_line:
                 ninja_started = True
@@ -344,16 +348,21 @@ def main():
 
     # Upload Start
     out_dir = f"out/target/product/{DEVICE}"
-    zips = glob.glob(f"{out_dir}/*{DEVICE}*.zip")
 
-    if not zips:
+    final_zip = None
+    if detected_zip and os.path.exists(detected_zip):
+        final_zip = detected_zip
+    else:
+        zips = glob.glob(f"{out_dir}/*{DEVICE}*.zip")
+        if zips:
+            final_zip = max(zips, key=os.path.getctime)
+
+    if not final_zip:
         edit_msg(
             msg_id,
             f"{final_build_msg}\n\n<b>⚠️ | Upload fail</b>\n\nNo ZIP found after build.",
         )
         sys.exit(1)
-
-    final_zip = max(zips, key=os.path.getctime)
 
     upload_start = time.time()
     pd_link = upload_pd(final_zip)
