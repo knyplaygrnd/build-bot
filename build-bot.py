@@ -9,6 +9,7 @@ import requests
 import html
 import signal
 import json
+import base64
 
 # Config
 if os.path.exists("config.env"):
@@ -161,15 +162,29 @@ def format_msg(icon, title, details, footer=""):
 
 def upload_pd(path):
     print(f"Uploading to PixelDrain: {path}")
+    if not PD_API:
+        print("PixelDrain API key missing.")
+        return None
+
+    file_name = os.path.basename(path)
+    url = f"https://pixeldrain.com/api/file/{file_name}"
+
+    auth_str = f":{PD_API}"
+    auth_bytes = auth_str.encode("ascii")
+    base64_auth = base64.b64encode(auth_bytes).decode("ascii")
+
+    headers = {"Authorization": f"Basic {base64_auth}"}
+
     try:
-        r = requests.put(
-            "https://pixeldrain.com/api/file/",
-            data=open(path, "rb"),
-            auth=("", PD_API) if PD_API else None,
-            timeout=300,
-        )
+        with open(path, "rb") as f:
+            r = requests.put(url, data=f, headers=headers, timeout=300)
+
         if r.status_code == 200:
             return f"https://pixeldrain.com/u/{r.json().get('id')}"
+        elif r.status_code == 201:
+            return f"https://pixeldrain.com/u/{r.json().get('id')}"
+
+        print(f"[PixelDrain Error {r.status_code}] {r.text}")
         return None
     except Exception as e:
         print(f"PixelDrain Upload Error: {e}")
