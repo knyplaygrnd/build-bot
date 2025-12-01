@@ -8,7 +8,7 @@ import argparse
 import requests
 import html
 import signal
-from datetime import timedelta
+import json
 
 # Config
 if os.path.exists("config.env"):
@@ -42,7 +42,7 @@ JOBS_FLAG = f"-j{jobs_env}" if jobs_env else (f"-j{cpu_cores}" if cpu_cores else
 SYNC_JOBS = jobs_env if jobs_env else (str(cpu_cores) if cpu_cores else "4")
 
 current_folder = os.getcwd().split("/")[-1]
-ROM_NAME = current_folder if current_folder else "Unknown ROM"
+ROM_NAME = current_folder or "Unknown ROM"
 
 # Global process handle for graceful exit
 BUILD_PROCESS = None
@@ -64,6 +64,14 @@ signal.signal(signal.SIGINT, signal_handler)
 
 
 # Helpers
+def fmt_time(seconds):
+    seconds = int(seconds)
+    h = seconds // 3600
+    m = (seconds % 3600) // 60
+    s = seconds % 60
+    return f"{h:02d}:{m:02d}:{s:02d}"
+
+
 def get_build_vars():
     print("Fetching build system variables...")
     try:
@@ -102,35 +110,31 @@ def tg_req(method, data, files=None, retries=3):
     return {}
 
 
-def send_msg(text, chat=CHAT_ID):
-    return (
-        tg_req(
-            "sendMessage",
-            {
-                "chat_id": chat,
-                "text": text,
-                "parse_mode": "html",
-                "disable_web_page_preview": "true",
-            },
-        )
-        .get("result", {})
-        .get("message_id")
-    )
+def send_msg(text, chat=CHAT_ID, buttons=None):
+    data = {
+        "chat_id": chat,
+        "text": text,
+        "parse_mode": "html",
+        "disable_web_page_preview": "true",
+    }
+    if buttons:
+        data["reply_markup"] = json.dumps({"inline_keyboard": buttons})
+    return tg_req("sendMessage", data).get("result", {}).get("message_id")
 
 
-def edit_msg(msg_id, text, chat=CHAT_ID):
+def edit_msg(msg_id, text, chat=CHAT_ID, buttons=None):
     if not msg_id:
         return
-    tg_req(
-        "editMessageText",
-        {
-            "chat_id": chat,
-            "message_id": msg_id,
-            "text": text,
-            "parse_mode": "html",
-            "disable_web_page_preview": "true",
-        },
-    )
+    data = {
+        "chat_id": chat,
+        "message_id": msg_id,
+        "text": text,
+        "parse_mode": "html",
+        "disable_web_page_preview": "true",
+    }
+    if buttons:
+        data["reply_markup"] = json.dumps({"inline_keyboard": buttons})
+    tg_req("editMessageText", data)
 
 
 def send_doc(file_path, chat=CHAT_ID):
@@ -149,7 +153,7 @@ def line(label, value):
 
 def format_msg(icon, title, details, footer=""):
     header = f"<b>{icon} | {title}</b>"
-    msg = f"{header}\n\n{details}"
+    msg = f"{header}\n{details}"
     if footer:
         msg += f"\n\n<i>{html.escape(footer)}</i>"
     return msg
@@ -203,17 +207,17 @@ def main():
     if args.sync:
         start = time.time()
         details = f"{line('rom', ROM_NAME)}\n{line('jobs', SYNC_JOBS)}"
-        msg_id = send_msg(format_msg("🟡", "Syncing sources...", details))
+        msg_id = send_msg(format_msg("ℹ️", "Starting...", details))
 
         cmd = f"repo sync -c -j{SYNC_JOBS} --optimized-fetch --prune --force-sync --no-clone-bundle --no-tags"
         if subprocess.call(cmd.split()) != 0:
             subprocess.call(f"repo sync -j{SYNC_JOBS}".split())
 
-        dur = str(timedelta(seconds=int(time.time() - start)))
+        dur = fmt_time(time.time() - start)
         edit_msg(
             msg_id,
             format_msg(
-                "🟢", "Sources synced!", f"{line('rom', ROM_NAME)}", f"Took {dur}"
+                "✅", "Sync Complete!", f"{line('rom', ROM_NAME)}", f"Took {dur}"
             ),
         )
 
@@ -230,17 +234,15 @@ def main():
     REAL_VARIANT = build_vars.get("TYPE", BUILD_VARIANT)
 
     base_info = (
-        f"{line('rom', ROM_NAME)}\n"
-        f"{line('device', DEVICE)}\n"
-        f"{line('android', ANDROID_VERSION)}\n"
-        f"{line('build id', BUILD_ID)}\n"
-        f"{line('build type', REAL_VARIANT)}"
+        f"<b>rom:</b> {ROM_NAME}\n"
+        f"<b>device:</b> {DEVICE}\n"
+        f"<b>android:</b> {ANDROID_VERSION}\n"
+        f"<b>build id:</b> {BUILD_ID}\n"
+        f"<b>build type:</b> {REAL_VARIANT}"
     )
 
-    initial_txt = (
-        f"{base_info}\n{line('progress', 'Initializing...')}\n{line('elapsed', '0s')}"
-    )
-    msg_id = send_msg(format_msg("🟡", "Compiling ROM...", initial_txt))
+    # Starting message: Status -> Info
+    msg_id = send_msg(f"ℹ️ | Starting...\n\n{base_info}")
 
     build_cmd = f"source build/envsetup.sh && breakfast {DEVICE} {BUILD_VARIANT} && m {TARGET} {JOBS_FLAG}"
     print(f"Cmd: {build_cmd}")
@@ -275,16 +277,25 @@ def main():
                 pct, cnt, time_left = match.groups()
                 now = time.time()
 
-                # Update Telegram every 15 seconds to avoid rate limits
                 if now - last_update > 15:
-                    elapsed_str = str(timedelta(seconds=int(now - start_time)))
-                    progress_val = f"{pct} ({cnt})"
+                    elapsed_str = fmt_time(now - start_time)
+
+                    prog_text = f"{pct} ({cnt})"
+                    remaining_line = ""
                     if time_left:
                         clean_time = time_left.replace(" remaining", "").strip()
-                        progress_val += f" remaining: {clean_time}"
+                        remaining_line = (
+                            f"<b>remaining:</b> <code>{clean_time}</code>\n"
+                        )
 
-                    new_details = f"{base_info}\n{line('progress', progress_val)}\n{line('elapsed', elapsed_str)}"
-                    edit_msg(msg_id, format_msg("🟡", "Compiling ROM...", new_details))
+                    edit_msg(
+                        msg_id,
+                        f"🔄 | Building...\n"
+                        f"<b>progress:</b> <code>{prog_text}</code>\n"
+                        f"{remaining_line}"
+                        f"<b>elapsed:</b> <code>{elapsed_str}</code>\n\n"
+                        f"{base_info}",
+                    )
                     last_update = now
 
         return_code = BUILD_PROCESS.wait()
@@ -295,38 +306,43 @@ def main():
     finally:
         log_file.close()
 
-    total_duration = str(timedelta(seconds=int(time.time() - start_time)))
+    total_duration = fmt_time(time.time() - start_time)
 
     # Failure Handling
     if return_code != 0:
         edit_msg(
             msg_id,
-            format_msg("🔴", "Build Failed", "", f"Failed after {total_duration}"),
+            f"⚠️ | Build fail\n\nFailed after {total_duration}\n\n{base_info}",
         )
         err_log = "out/error.log" if os.path.exists("out/error.log") else "build.log"
         send_doc(err_log, ERROR_CHAT_ID)
         sys.exit(1)
 
-    # Success & Upload
+    # Build Success
+    final_build_msg = (
+        f"✅ | Build Complete!\n" f"Build time: {total_duration}\n\n" f"{base_info}"
+    )
+
+    edit_msg(msg_id, f"{final_build_msg}\n\n🔄 | Uploading...")
+
+    # Upload Start
     out_dir = f"out/target/product/{DEVICE}"
     zips = glob.glob(f"{out_dir}/*{DEVICE}*.zip")
 
     if not zips:
         edit_msg(
-            msg_id,
-            format_msg(
-                "🔴", "No ZIP found!", "", "Build finished but no file generated."
-            ),
+            msg_id, f"{final_build_msg}\n\n⚠️ | Upload fail\n\nNo ZIP found after build."
         )
         sys.exit(1)
 
     final_zip = max(zips, key=os.path.getctime)
-    edit_msg(msg_id, format_msg("🟡", "Uploading...", "Uploading artifacts..."))
 
+    upload_start = time.time()
     pd_link = upload_pd(final_zip)
     gf_link = upload_gofile(final_zip) if USE_GOFILE else None
+    upload_duration = fmt_time(time.time() - upload_start)
 
-    # Final Stats
+    # Upload Stats
     size_mb = os.path.getsize(final_zip) / (1024 * 1024)
     size_str = f"{size_mb:.2f} MB"
     try:
@@ -334,36 +350,40 @@ def main():
     except:
         md5 = "N/A"
 
-    final_details = f"{base_info}\n{line('size', size_str)}\n{line('md5', md5)}"
-
-    links_html = ""
+    # Buttons
+    buttons_list = []
     if pd_link:
-        links_html += f"\n<b>PixelDrain:</b> <a href='{pd_link}'>Download</a>"
-    else:
-        links_html += "\n<b>PixelDrain:</b> Upload Failed"
-
-    if USE_GOFILE:
-        if gf_link:
-            links_html += f"\n<b>GoFile:</b> <a href='{gf_link}'>Download</a>"
-        else:
-            links_html += "\n<b>GoFile:</b> Upload Failed"
+        buttons_list.append({"text": "PixelDrain", "url": pd_link})
+    if USE_GOFILE and gf_link:
+        buttons_list.append({"text": "GoFile", "url": gf_link})
 
     # Optional JSON
     json_f = glob.glob(f"{out_dir}/*{DEVICE}*.json")
     if json_f:
         json_link = upload_pd(json_f[0])
         if json_link:
-            links_html += f"\n<b>JSON:</b> <a href='{json_link}'>Download</a>"
+            buttons_list.append({"text": "JSON", "url": json_link})
 
-    edit_msg(
-        msg_id,
-        format_msg(
-            "🟢",
-            "Build Complete!",
-            final_details + "\n" + links_html,
-            f"Total time: {total_duration}",
-        ),
+    file_name = os.path.basename(final_zip)
+
+    # Final Message
+    final_combined_msg = (
+        f"{final_build_msg}\n\n"
+        f"✅ | Upload completo\n"
+        f"Upload time: {upload_duration}\n\n"
+        f"file: {file_name}\n"
+        f"size: {size_str}\n"
+        f"md5: {md5}"
     )
+
+    if pd_link or gf_link:
+        edit_msg(
+            msg_id, final_combined_msg, buttons=[buttons_list] if buttons_list else None
+        )
+    else:
+        edit_msg(
+            msg_id, f"{final_build_msg}\n\n⚠️ | Upload fail\n\nCould not upload files."
+        )
 
 
 if __name__ == "__main__":
