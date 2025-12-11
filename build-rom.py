@@ -7,7 +7,7 @@ import glob
 import argparse
 import utils
 
-# Config
+# Load config variables
 BOT_TOKEN = os.environ.get("CONFIG_BOT_TOKEN")
 CHAT_ID = os.environ.get("CONFIG_CHATID")
 ERROR_CHAT_ID = os.environ.get("CONFIG_ERROR_CHATID", CHAT_ID)
@@ -65,7 +65,7 @@ def main():
     parser.add_argument("-c", "--clean", action="store_true")
     args = parser.parse_args()
 
-    # Sync
+    # Sync sources if requested
     if args.sync:
         start = time.time()
         details = f"{utils.line('Rom', ROM_NAME)}\n{utils.line('Jobs', SYNC_JOBS)}"
@@ -83,7 +83,7 @@ def main():
             ),
         )
 
-    # Clean
+    # Clean output
     if args.clean and os.path.exists("out"):
         import shutil
 
@@ -111,6 +111,7 @@ def main():
     log_file = open("build.log", "w")
     start_time = time.time()
 
+    # Start build process
     BUILD_PROCESS = subprocess.Popen(
         build_cmd,
         shell=True,
@@ -126,6 +127,7 @@ def main():
     ninja_started = False
     detected_zip = None
 
+    # Monitor build output
     try:
         for log_line in BUILD_PROCESS.stdout:
             sys.stdout.write(log_line)
@@ -170,7 +172,7 @@ def main():
 
     total_duration = utils.fmt_time(time.time() - start_time)
 
-    # Failure
+    # Build failure
     if return_code != 0:
         utils.edit_msg(
             msg_id,
@@ -182,7 +184,7 @@ def main():
         utils.send_doc(err_log, ERROR_CHAT_ID)
         sys.exit(1)
 
-    # Success
+    # Build success
     final_build_msg = utils.MESSAGES["build_success"].format(
         time=total_duration, base_info=base_info
     )
@@ -190,7 +192,7 @@ def main():
         msg_id, utils.MESSAGES["uploading"].format(build_msg=final_build_msg)
     )
 
-    # Upload
+    # Upload artifacts
     out_dir = f"out/target/product/{DEVICE}"
     final_zip = None
     if detected_zip and os.path.exists(detected_zip):

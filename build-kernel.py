@@ -8,7 +8,7 @@ import re
 from datetime import datetime
 import utils
 
-# Configs
+# Load config variables
 BOT_TOKEN = os.environ.get("CONFIG_BOT_TOKEN")
 CHAT_ID = os.environ.get("CONFIG_CHATID")
 ERROR_CHAT_ID = os.environ.get("CONFIG_ERROR_CHATID", CHAT_ID)
@@ -95,6 +95,7 @@ def get_compiled_version_string():
     return None
 
 
+# Package the kernel using AnyKernel3
 def package_anykernel(version_string):
     print("Packaging AnyKernel3...")
 
@@ -113,7 +114,7 @@ def package_anykernel(version_string):
     # Default map
     files_map = {"Image.gz": "Image.gz", "dtbo.img": "dtbo.img", "dtb.img": "dtb"}
 
-    # Expected format: "source:dest;source2:dest2"
+    # Handle custom files map from config
     user_map_env = os.environ.get("CONFIG_FILES_MAP")
 
     if user_map_env:
@@ -132,6 +133,7 @@ def package_anykernel(version_string):
         except Exception as e:
             print(f"Error reading CONFIG_FILES_MAP: {e}. Using default.")
 
+    # Copy files to AnyKernel
     for src_name, dst_name in files_map.items():
         src = os.path.join(KERNEL_OUT, src_name)
         dst = os.path.join(ANYKERNEL_DIR, dst_name)
@@ -148,6 +150,7 @@ def package_anykernel(version_string):
     cwd = os.getcwd()
     os.chdir(ANYKERNEL_DIR)
 
+    # Create the zip package
     zip_cmd = [
         "zip",
         "-r9",
@@ -176,6 +179,7 @@ def main():
     parser.add_argument("-c", "--clean", action="store_true")
     args = parser.parse_args()
 
+    # Clean output if requested
     if args.clean and os.path.exists("out"):
         print("Cleaning out/...")
         shutil.rmtree("out")
@@ -192,8 +196,8 @@ def main():
 
     msg_id = utils.send_msg(utils.MESSAGES["build_start"].format(base_info=base_info))
 
+    # Configure the output
     cmd_config = ["make", "O=out", "ARCH=arm64", "LLVM=1", DEFCONFIG]
-
     print(f"Configuring: {DEFCONFIG}")
     subprocess.call(cmd_config)
 
@@ -208,6 +212,7 @@ def main():
         f"{utils.line('Compiler', compiler_ver)}"
     )
 
+    # Build command
     build_cmd = [
         "make",
         JOBS_FLAG,
@@ -218,11 +223,12 @@ def main():
         "dtbo.img",
         "dtb.img",
     ]
-    print(f"Building: {' '.join(build_cmd)}")  # Apenas para visualização no log
+    print(f"Building: {' '.join(build_cmd)}")
 
     start_time = time.time()
     log_file = open(LOG_FILE, "w")
 
+    # Start build process
     BUILD_PROCESS = subprocess.Popen(
         build_cmd,
         stdout=subprocess.PIPE,
@@ -233,6 +239,7 @@ def main():
 
     last_update = 0
 
+    # Monitor build output
     try:
         while True:
             line_out = BUILD_PROCESS.stdout.readline()
@@ -247,9 +254,7 @@ def main():
             now = time.time()
             if now - last_update > 15:
                 elapsed = utils.fmt_time(now - start_time)
-
                 stats_str = f"<b>Elapsed:</b> <code>{elapsed}</code>"
-
                 utils.edit_msg(
                     msg_id,
                     utils.MESSAGES["build_progress"].format(
@@ -270,7 +275,7 @@ def main():
 
     total_duration = utils.fmt_time(time.time() - start_time)
 
-    # Failure
+    # Build failure
     if return_code != 0:
         utils.edit_msg(
             msg_id,
@@ -281,7 +286,7 @@ def main():
         utils.send_doc(LOG_FILE, ERROR_CHAT_ID)
         sys.exit(1)
 
-    # Success
+    # Build success
     final_build_msg = utils.MESSAGES["build_success"].format(
         time=total_duration, base_info=base_info
     )
@@ -289,7 +294,7 @@ def main():
         msg_id, utils.MESSAGES["uploading"].format(build_msg=final_build_msg)
     )
 
-    # Package
+    # Package and upload
     compiled_ver_str = get_compiled_version_string()
     final_zip = package_anykernel(compiled_ver_str)
 
@@ -302,7 +307,6 @@ def main():
         )
         sys.exit(1)
 
-    # Upload
     file_name = os.path.basename(final_zip)
     upload_start = time.time()
     pd_link = utils.upload_pd(final_zip)

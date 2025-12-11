@@ -8,18 +8,17 @@ import requests
 import signal
 from dotenv import load_dotenv
 
-# Load Config
+# Load configs from .env file
 load_dotenv("config.env")
 BOT_TOKEN = os.environ.get("CONFIG_BOT_TOKEN")
 CHAT_ID = os.environ.get("CONFIG_CHATID")
 PD_API = os.environ.get("CONFIG_PDUP_API")
 
-# Strings
+# Message templates for Telegram notifications
 MESSAGES = {
     "sync_start": "<b>ℹ️ | Starting Synchronization...</b>\n{details}",
     "sync_done": "<b>✅ | Synchronization Complete!</b>\n{details}\n<b>Time:</b> {dur}",
     "build_start": "<b>ℹ️ | Starting Build...</b>\n\n{base_info}",
-    # {stats} can be "Progress: 50%..." or just "Elapsed: 10m"
     "build_progress": ("<b>🔄 | Building...</b>\n" "{stats}\n\n" "{base_info}"),
     "build_fail": "<b>⚠️ | Build Failed</b>\n\nFailed after {time}\n\n{base_info}",
     "build_success": (
@@ -40,7 +39,7 @@ MESSAGES = {
 }
 
 
-# Helpers
+# Formatting
 def fmt_time(seconds):
     seconds = int(seconds)
     h = seconds // 3600
@@ -53,7 +52,7 @@ def line(label, value):
     return f"<b>{label}:</b> <code>{html.escape(str(value))}</code>"
 
 
-# Telegram
+# Telegram API
 def tg_req(method, data, files=None, retries=3):
     if not BOT_TOKEN:
         print("Error: BOT_TOKEN missing in utils.")
@@ -113,7 +112,7 @@ def send_doc(file_path, chat_id=CHAT_ID):
             )
 
 
-# Upload
+# Upload for PixelDrain
 def upload_pd(path):
     print(f"Uploading to PixelDrain: {path}")
     if not PD_API:
@@ -143,6 +142,7 @@ def upload_pd(path):
         return None
 
 
+# Upload for GoFile
 def upload_gofile(path):
     print(f"Uploading to GoFile: {path}")
     try:
@@ -166,6 +166,7 @@ def upload_gofile(path):
         return None
 
 
+# Signal handler to kill build processes
 def register_signal_handler(process_getter):
 
     def handler(sig, frame):
