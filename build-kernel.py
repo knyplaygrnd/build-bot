@@ -189,7 +189,7 @@ def main():
     print(f"Configuring: {DEFCONFIG}")
     subprocess.call(cmd_config)
 
-    local_ver = get_localversion()  
+    local_ver = get_localversion()
 
     # Update info with local version
     base_info = (
@@ -200,8 +200,17 @@ def main():
         f"{utils.line('Compiler', compiler_ver)}"
     )
 
-    build_cmd = ["make", JOBS_FLAG, "O=out", "ARCH=arm64", "LLVM=1", "Image.gz", "dtbo.img", "dtb.img"]
-    print(f"Building: {' '.join(build_cmd)}") # Apenas para visualização no log
+    build_cmd = [
+        "make",
+        JOBS_FLAG,
+        "O=out",
+        "ARCH=arm64",
+        "LLVM=1",
+        "Image.gz",
+        "dtbo.img",
+        "dtb.img",
+    ]
+    print(f"Building: {' '.join(build_cmd)}")  # Apenas para visualização no log
 
     start_time = time.time()
     log_file = open(LOG_FILE, "w")
