@@ -5,6 +5,7 @@ import json
 import html
 import base64
 import requests
+import signal
 from dotenv import load_dotenv
 
 # Load Config
@@ -163,3 +164,20 @@ def upload_gofile(path):
     except Exception as e:
         print(f"GoFile Upload Error: {e}")
         return None
+
+
+def register_signal_handler(process_getter):
+
+    def handler(sig, frame):
+        print("\n[BOT] Interruption detected. Exiting...")
+        process = process_getter()
+
+        if process and process.poll() is None:
+            print("[BOT] Killing build process...")
+            process.terminate()
+            time.sleep(1)
+            if process.poll() is None:
+                process.kill()
+        sys.exit(0)
+
+    signal.signal(signal.SIGINT, handler)

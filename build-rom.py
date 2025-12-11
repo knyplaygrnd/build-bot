@@ -5,7 +5,6 @@ import subprocess
 import re
 import glob
 import argparse
-import signal
 import utils
 
 # Config
@@ -30,21 +29,6 @@ current_folder = os.getcwd().split("/")[-1]
 ROM_NAME = os.environ.get("CONFIG_ROM_NAME") or current_folder or "Unknown ROM"
 
 BUILD_PROCESS = None
-
-
-def signal_handler(sig, frame):
-    global BUILD_PROCESS
-    print("\n[BOT] Interruption detected. Exiting...")
-    if BUILD_PROCESS and BUILD_PROCESS.poll() is None:
-        print("[BOT] Killing build process...")
-        BUILD_PROCESS.terminate()
-        time.sleep(1)
-        if BUILD_PROCESS.poll() is None:
-            BUILD_PROCESS.kill()
-    sys.exit(0)
-
-
-signal.signal(signal.SIGINT, signal_handler)
 
 
 def get_build_vars():
@@ -73,6 +57,8 @@ def get_build_vars():
 
 def main():
     global BUILD_PROCESS
+
+    utils.register_signal_handler(lambda: BUILD_PROCESS)
 
     parser = argparse.ArgumentParser()
     parser.add_argument("-s", "--sync", action="store_true")

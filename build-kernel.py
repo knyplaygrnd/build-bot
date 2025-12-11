@@ -4,7 +4,6 @@ import time
 import subprocess
 import shutil
 import argparse
-import signal
 import re
 from datetime import datetime
 import utils
@@ -31,21 +30,6 @@ ANYKERNEL_DIR = "AnyKernel3"
 LOG_FILE = "build.log"
 
 BUILD_PROCESS = None
-
-
-def signal_handler(sig, frame):
-    global BUILD_PROCESS
-    print("\n[BOT] Interruption detected. Exiting...")
-    if BUILD_PROCESS and BUILD_PROCESS.poll() is None:
-        print("[BOT] Killing build process...")
-        BUILD_PROCESS.terminate()
-        time.sleep(1)
-        if BUILD_PROCESS.poll() is None:
-            BUILD_PROCESS.kill()
-    sys.exit(0)
-
-
-signal.signal(signal.SIGINT, signal_handler)
 
 
 def get_git_head():
@@ -84,16 +68,15 @@ def get_localversion():
 
 def get_compiler_version():
     try:
-        cmd = "clang --version | head -n 1"
-        output = subprocess.check_output(cmd, shell=True, text=True).strip()
-        match = re.search(r"clang version \d+\.\d+\.\d+", output)
+        output = subprocess.check_output(["clang", "--version"], text=True).strip()
+        first_line = output.splitlines()[0] if output else ""
+        match = re.search(r"clang version \d+\.\d+\.\d+", first_line)
         if match:
             return match.group(0)
-        if "clang version" in output:
-            return "Clang " + output.split("clang version")[-1].strip().split()[0]
-    except Exception:
-        pass
-    return "Clang/LLVM"
+        return "Clang/LLVM"
+    except Exception as e:
+        print(f"Compiler check error: {e}")
+        return "Clang/LLVM"
 
 
 def get_compiled_version_string():
@@ -164,6 +147,8 @@ def package_anykernel(version_string):
 
 def main():
     global BUILD_PROCESS
+    utils.register_signal_handler(lambda: BUILD_PROCESS)
+
     parser = argparse.ArgumentParser()
     parser.add_argument("-c", "--clean", action="store_true")
     args = parser.parse_args()
