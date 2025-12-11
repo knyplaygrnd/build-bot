@@ -110,13 +110,36 @@ def package_anykernel(version_string):
         print("Cloning AnyKernel3...")
         subprocess.call(["git", "clone", "-q", AK3_REPO, ANYKERNEL_DIR])
 
+    # Default map
     files_map = {"Image.gz": "Image.gz", "dtbo.img": "dtbo.img", "dtb.img": "dtb"}
+
+    # Expected format: "source:dest;source2:dest2"
+    user_map_env = os.environ.get("CONFIG_FILES_MAP")
+
+    if user_map_env:
+        try:
+            custom_map = {}
+            for pair in user_map_env.split(";"):
+                if ":" in pair:
+                    src, dst = pair.split(":", 1)
+                    custom_map[src.strip()] = dst.strip()
+
+            if custom_map:
+                files_map = custom_map
+                print(f"Custom files map loaded: {files_map}")
+            else:
+                print("Warning: CONFIG_FILES_MAP is empty or invalid. Using default.")
+        except Exception as e:
+            print(f"Error reading CONFIG_FILES_MAP: {e}. Using default.")
 
     for src_name, dst_name in files_map.items():
         src = os.path.join(KERNEL_OUT, src_name)
         dst = os.path.join(ANYKERNEL_DIR, dst_name)
         if os.path.exists(src):
             shutil.copy(src, dst)
+            print(f"Copied: {src_name} -> {dst_name}")
+        else:
+            print(f"Warning: Source file not found: {src}")
 
     timestamp = datetime.now().strftime("%Y%a%b%d-%H%M%S")
     ver_tag = version_string if version_string else "Unknown-Kernel"
