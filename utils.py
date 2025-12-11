@@ -5,17 +5,10 @@ import json
 import html
 import base64
 import requests
+from dotenv import load_dotenv
 
 # Load Config
-def load_config():
-    if os.path.exists("config.env"):
-        with open("config.env", "r") as f:
-            for line_content in f:
-                if "=" in line_content and not line_content.strip().startswith("#"):
-                    k, v = line_content.strip().split("=", 1)
-                    os.environ[k] = v.strip('"').strip("'")
-
-load_config()
+load_dotenv("config.env")
 BOT_TOKEN = os.environ.get("CONFIG_BOT_TOKEN")
 CHAT_ID = os.environ.get("CONFIG_CHATID")
 PD_API = os.environ.get("CONFIG_PDUP_API")
