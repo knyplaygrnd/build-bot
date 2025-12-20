@@ -15,6 +15,7 @@ DEVICE = os.environ.get("CONFIG_DEVICE")
 TARGET = os.environ.get("CONFIG_BUILD_TARGET")
 BUILD_VARIANT = os.environ.get("CONFIG_BUILD_TYPE")
 USE_GOFILE = os.environ.get("CONFIG_GOFILE") == "true"
+REC_IMAGES = os.environ.get("CONFIG_RECOVERY_IMAGES")
 
 if not all([BOT_TOKEN, CHAT_ID, DEVICE, TARGET, BUILD_VARIANT]):
     print("ERROR: Missing configuration (BOT_TOKEN, CHATID, DEVICE, TARGET, or TYPE).")
@@ -193,6 +194,7 @@ def main():
     )
 
     # Upload artifacts
+    # Locate the rom package
     out_dir = f"out/target/product/{DEVICE}"
     final_zip = None
     if detected_zip and os.path.exists(detected_zip):
@@ -211,9 +213,38 @@ def main():
         )
         sys.exit(1)
 
+    # Packaging recovery images if requested
+    rec_zip_path = None
+    if REC_IMAGES:
+        print("Packaging recovery images...")
+        rec_list = re.split(r"[;\s]+", REC_IMAGES)
+        cmd_files = []
+        for img in rec_list:
+            if not img:
+                continue
+            f_path = os.path.join(out_dir, img)
+            if os.path.exists(f_path):
+                cmd_files.append(f_path)
+
+        if cmd_files:
+            rec_name = f"RECOVERY-{os.path.basename(final_zip)}"
+            subprocess.call(["zip", "-j", rec_name] + cmd_files)
+            if os.path.exists(rec_name):
+                rec_zip_path = rec_name
+
+    # Upload ROM
     upload_start = time.time()
     pd_link = utils.upload_pd(final_zip)
     gf_link = utils.upload_gofile(final_zip) if USE_GOFILE else None
+
+    # Upload Recovery
+    rec_pd_link = None
+    rec_gf_link = None
+    if rec_zip_path:
+        rec_pd_link = utils.upload_pd(rec_zip_path)
+        if USE_GOFILE:
+            rec_gf_link = utils.upload_gofile(rec_zip_path)
+
     upload_duration = utils.fmt_time(time.time() - upload_start)
 
     size_mb = os.path.getsize(final_zip) / (1024 * 1024)
@@ -224,10 +255,18 @@ def main():
         md5 = "N/A"
 
     buttons_list = []
+
+    # Rom
     if pd_link:
-        buttons_list.append({"text": "PixelDrain", "url": pd_link})
+        buttons_list.append({"text": "Download (PD)", "url": pd_link})
     if USE_GOFILE and gf_link:
-        buttons_list.append({"text": "GoFile", "url": gf_link})
+        buttons_list.append({"text": "Download (GF)", "url": gf_link})
+
+    # Recovery
+    if rec_pd_link:
+        buttons_list.append({"text": "Recovery (PD)", "url": rec_pd_link})
+    if rec_gf_link:
+        buttons_list.append({"text": "Recovery (GF)", "url": rec_gf_link})
 
     json_f = glob.glob(f"{out_dir}/*{DEVICE}*.json")
     if json_f:
