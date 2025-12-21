@@ -252,15 +252,20 @@ def main():
         print(f"Uploading {label} ({os.path.basename(file_path)})...")
         uploads = utils.upload_all(file_path, USE_GOFILE)
 
+        current_row = []
+
         if uploads["pd"]:
-            buttons_list.append({"text": f"{label} (PD)", "url": uploads["pd"]})
+            current_row.append({"text": f"{label} (PD)", "url": uploads["pd"]})
             if file_path == final_zip:
                 main_file_uploaded = True
 
         if uploads["gf"]:
-            buttons_list.append({"text": f"{label} (GF)", "url": uploads["gf"]})
+            current_row.append({"text": f"{label} (GF)", "url": uploads["gf"]})
             if file_path == final_zip:
                 main_file_uploaded = True
+
+        if current_row:
+            buttons_list.append(current_row)
 
     upload_duration = utils.fmt_time(time.time() - upload_start)
 
@@ -279,7 +284,7 @@ def main():
                 size=size_str,
                 md5=md5,
             ),
-            buttons=[buttons_list] if buttons_list else None,
+            buttons=buttons_list if buttons_list else None,
         )
     else:
         utils.edit_msg(
