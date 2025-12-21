@@ -294,7 +294,7 @@ def main():
         msg_id, utils.MESSAGES["uploading"].format(build_msg=final_build_msg)
     )
 
-    # Package and upload
+    # Package
     compiled_ver_str = get_compiled_version_string()
     final_zip = package_anykernel(compiled_ver_str)
 
@@ -307,26 +307,38 @@ def main():
         )
         sys.exit(1)
 
-    file_name = os.path.basename(final_zip)
+    # Upload files
     upload_start = time.time()
-    pd_link = utils.upload_pd(final_zip)
-    gf_link = utils.upload_gofile(final_zip) if USE_GOFILE else None
-    upload_duration = utils.fmt_time(time.time() - upload_start)
-
-    size_mb = os.path.getsize(final_zip) / (1024 * 1024)
-    size_str = f"{size_mb:.2f} MB"
-    try:
-        md5 = subprocess.check_output(["md5sum", final_zip], text=True).split()[0]
-    except:
-        md5 = "N/A"
+    files_to_upload = [("Download", final_zip)]
 
     buttons_list = []
-    if pd_link:
-        buttons_list.append({"text": "PixelDrain", "url": pd_link})
-    if USE_GOFILE and gf_link:
-        buttons_list.append({"text": "GoFile", "url": gf_link})
+    main_file_uploaded = False
 
-    if pd_link or gf_link:
+    for label, file_path in files_to_upload:
+        if not file_path or not os.path.exists(file_path):
+            continue
+
+        pd_link = utils.upload_pd(file_path)
+        if pd_link:
+            buttons_list.append({"text": f"{label} (PD)", "url": pd_link})
+            if file_path == final_zip:
+                main_file_uploaded = True
+
+        if USE_GOFILE:
+            gf_link = utils.upload_gofile(file_path)
+            if gf_link:
+                buttons_list.append({"text": f"{label} (GF)", "url": gf_link})
+                if file_path == final_zip:
+                    main_file_uploaded = True
+
+    upload_duration = utils.fmt_time(time.time() - upload_start)
+
+    md5 = utils.get_md5(final_zip)
+    size_mb = os.path.getsize(final_zip) / (1024 * 1024)
+    size_str = f"{size_mb:.2f} MB"
+    file_name = os.path.basename(final_zip)
+
+    if main_file_uploaded:
         utils.edit_msg(
             msg_id,
             utils.MESSAGES["final_msg"].format(

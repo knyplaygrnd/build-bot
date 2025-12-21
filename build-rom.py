@@ -194,7 +194,6 @@ def main():
     )
 
     # Locate/Prepare artifacts
-    # Locate the rom package
     out_dir = f"out/target/product/{DEVICE}"
     final_zip = None
     if detected_zip and os.path.exists(detected_zip):
@@ -265,13 +264,9 @@ def main():
 
     upload_duration = utils.fmt_time(time.time() - upload_start)
 
+    md5 = utils.get_md5(final_zip)
     size_mb = os.path.getsize(final_zip) / (1024 * 1024)
     size_str = f"{size_mb:.2f} MB"
-    try:
-        md5 = subprocess.check_output(["md5sum", final_zip], text=True).split()[0]
-    except:
-        md5 = "N/A"
-
     file_name = os.path.basename(final_zip)
 
     if main_file_uploaded:

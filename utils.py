@@ -6,6 +6,7 @@ import html
 import base64
 import requests
 import signal
+import subprocess
 from dotenv import load_dotenv
 
 # Load configs from .env file
@@ -50,6 +51,15 @@ def fmt_time(seconds):
 
 def line(label, value):
     return f"<b>{label}:</b> <code>{html.escape(str(value))}</code>"
+
+
+def get_md5(file_path):
+    if not os.path.exists(file_path):
+        return "N/A"
+    try:
+        return subprocess.check_output(["md5sum", file_path], text=True).split()[0]
+    except Exception:
+        return "N/A"
 
 
 # Telegram API
