@@ -7,6 +7,7 @@ import base64
 import requests
 import signal
 import subprocess
+import concurrent.futures
 from dotenv import load_dotenv
 
 # Load configs from .env file
@@ -173,6 +174,20 @@ def upload_gofile(path):
     except Exception as e:
         print(f"GoFile Upload Error: {e}")
         return None
+
+# Performs simultaneous uploads
+def upload_all(path, use_gofile=False):
+    results = {"pd": None, "gf": None}
+
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        future_pd = executor.submit(upload_pd, path)
+        future_gf = executor.submit(upload_gofile, path) if use_gofile else None
+
+        results["pd"] = future_pd.result()
+        if future_gf:
+            results["gf"] = future_gf.result()
+
+    return results
 
 
 # Signal handler to kill build processes

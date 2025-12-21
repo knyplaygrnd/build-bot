@@ -249,18 +249,18 @@ def main():
         if not file_path or not os.path.exists(file_path):
             continue
 
-        pd_link = utils.upload_pd(file_path)
-        if pd_link:
-            buttons_list.append({"text": f"{label} (PD)", "url": pd_link})
+        print(f"Uploading {label} ({os.path.basename(file_path)})...")
+        uploads = utils.upload_all(file_path, USE_GOFILE)
+
+        if uploads["pd"]:
+            buttons_list.append({"text": f"{label} (PD)", "url": uploads["pd"]})
             if file_path == final_zip:
                 main_file_uploaded = True
 
-        if USE_GOFILE:
-            gf_link = utils.upload_gofile(file_path)
-            if gf_link:
-                buttons_list.append({"text": f"{label} (GF)", "url": gf_link})
-                if file_path == final_zip:
-                    main_file_uploaded = True
+        if uploads["gf"]:
+            buttons_list.append({"text": f"{label} (GF)", "url": uploads["gf"]})
+            if file_path == final_zip:
+                main_file_uploaded = True
 
     upload_duration = utils.fmt_time(time.time() - upload_start)
 
