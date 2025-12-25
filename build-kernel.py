@@ -197,7 +197,7 @@ def main():
     msg_id = utils.send_msg(utils.MESSAGES["build_start"].format(base_info=base_info))
 
     # Configure the output
-    cmd_config = ["make", "O=out", "ARCH=arm64", "LLVM=1", DEFCONFIG]
+    cmd_config = ["make", "O=out", "ARCH=arm64", "LLVM=1"] + DEFCONFIG.split()
     print(f"Configuring: {DEFCONFIG}")
     subprocess.call(cmd_config)
 
