@@ -16,6 +16,7 @@ DEFCONFIG = os.environ.get("CONFIG_DEFCONFIG")
 AK3_REPO = os.environ.get("CONFIG_AK3_REPO")
 USE_GOFILE = os.environ.get("CONFIG_GOFILE") == "true"
 KSU_URL = os.environ.get("CONFIG_KSU_URL", "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh")
+CUSTOM_COMMANDS = os.environ.get("CONFIG_KERNEL_CUSTOM_COMMANDS")
 
 if not all([BOT_TOKEN, CHAT_ID, DEFCONFIG]):
     print("ERROR: Missing configuration (BOT_TOKEN, CHATID, or DEFCONFIG).")
@@ -210,6 +211,10 @@ def main():
     if args.clean and os.path.exists("out"):
         print("Cleaning out/...")
         shutil.rmtree("out")
+
+    # Execute custom commands if provided
+    if CUSTOM_COMMANDS:
+        subprocess.run(CUSTOM_COMMANDS, shell=True, executable="/bin/bash")
 
     git_head_link = get_git_head()
     compiler_ver = get_compiler_version()

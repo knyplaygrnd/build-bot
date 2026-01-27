@@ -15,6 +15,7 @@ DEVICE = os.environ.get("CONFIG_DEVICE")
 TARGET = os.environ.get("CONFIG_BUILD_TARGET")
 BUILD_VARIANT = os.environ.get("CONFIG_BUILD_TYPE")
 USE_GOFILE = os.environ.get("CONFIG_GOFILE") == "true"
+CUSTOM_COMMANDS = os.environ.get("CONFIG_ROM_CUSTOM_COMMANDS")
 REC_IMAGES = os.environ.get("CONFIG_RECOVERY_IMAGES")
 
 if not all([BOT_TOKEN, CHAT_ID, DEVICE, TARGET, BUILD_VARIANT]):
@@ -106,7 +107,10 @@ def main():
 
     msg_id = utils.send_msg(utils.MESSAGES["build_start"].format(base_info=base_info))
 
-    build_cmd = f"source build/envsetup.sh && breakfast {DEVICE} {BUILD_VARIANT} && m {TARGET} {JOBS_FLAG}"
+    build_cmd = f"source build/envsetup.sh && breakfast {DEVICE} {BUILD_VARIANT}"
+    if CUSTOM_COMMANDS:
+        build_cmd += f" && {CUSTOM_COMMANDS}"
+    build_cmd += f" && m {TARGET} {JOBS_FLAG}"
     print(f"Cmd: {build_cmd}")
 
     log_file = open("build.log", "w")
