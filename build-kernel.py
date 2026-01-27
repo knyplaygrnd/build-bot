@@ -212,10 +212,6 @@ def main():
         print("Cleaning out/...")
         shutil.rmtree("out")
 
-    # Execute custom commands if provided
-    if CUSTOM_COMMANDS:
-        subprocess.run(CUSTOM_COMMANDS, shell=True, executable="/bin/bash")
-
     git_head_link = get_git_head()
     compiler_ver = get_compiler_version()
 
@@ -232,6 +228,10 @@ def main():
     cmd_config = ["make", "O=out", "ARCH=arm64", "LLVM=1"] + DEFCONFIG.split()
     print(f"Configuring: {DEFCONFIG}")
     subprocess.call(cmd_config)
+
+    # Execute custom commands if provided
+    if CUSTOM_COMMANDS:
+        subprocess.run(CUSTOM_COMMANDS, shell=True, executable="/bin/bash")
 
     local_ver = get_localversion()
 
