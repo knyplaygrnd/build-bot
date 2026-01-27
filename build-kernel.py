@@ -15,6 +15,7 @@ ERROR_CHAT_ID = os.environ.get("CONFIG_ERROR_CHATID", CHAT_ID)
 DEFCONFIG = os.environ.get("CONFIG_DEFCONFIG")
 AK3_REPO = os.environ.get("CONFIG_AK3_REPO")
 USE_GOFILE = os.environ.get("CONFIG_GOFILE") == "true"
+KSU_URL = os.environ.get("CONFIG_KSU_URL", "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh")
 
 if not all([BOT_TOKEN, CHAT_ID, DEFCONFIG]):
     print("ERROR: Missing configuration (BOT_TOKEN, CHATID, or DEFCONFIG).")
@@ -96,7 +97,7 @@ def get_compiled_version_string():
 
 
 # Package the kernel using AnyKernel3
-def package_anykernel(version_string):
+def package_anykernel(version_string, ksu_enabled=False):
     print("Packaging AnyKernel3...")
 
     if os.path.exists(ANYKERNEL_DIR):
@@ -146,6 +147,8 @@ def package_anykernel(version_string):
     timestamp = datetime.now().strftime("%Y%a%b%d-%H%M%S")
     ver_tag = version_string if version_string else "Unknown-Kernel"
     zip_name = f"{ver_tag}-{timestamp}.zip"
+    if ksu_enabled:
+        zip_name = f"KSU-{zip_name}"
 
     cwd = os.getcwd()
     os.chdir(ANYKERNEL_DIR)
@@ -177,7 +180,18 @@ def main():
 
     parser = argparse.ArgumentParser()
     parser.add_argument("-c", "--clean", action="store_true")
+    parser.add_argument("--ksu", action="store_true", help="Enable KernelSU support")
     args = parser.parse_args()
+
+    if args.ksu:
+        print("Setting up KernelSU...")
+        ksu_setup_cmd = f'curl -LSs "{KSU_URL}" | bash'
+        try:
+            subprocess.run(ksu_setup_cmd, shell=True, check=True)
+            print("KernelSU setup successful.")
+        except subprocess.CalledProcessError as e:
+            print(f"Error setting up KernelSU: {e}", file=sys.stderr)
+            sys.exit(1)
 
     # Clean output if requested
     if args.clean and os.path.exists("out"):
@@ -296,7 +310,7 @@ def main():
 
     # Package
     compiled_ver_str = get_compiled_version_string()
-    final_zip = package_anykernel(compiled_ver_str)
+    final_zip = package_anykernel(compiled_ver_str, args.ksu)
 
     if not final_zip:
         utils.edit_msg(
