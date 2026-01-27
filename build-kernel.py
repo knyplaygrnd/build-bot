@@ -87,7 +87,7 @@ def get_compiled_version_string():
     try:
         cmd = f"strings {image_path} | grep 'Linux version [0-9]' | head -n 1"
         line_out = subprocess.check_output(cmd, shell=True, text=True).strip()
-        match = re.search(r"Linux version (\S+)", line_out)
+        match = re.search(r"Linux version (.*)", line_out)
         if match:
             return match.group(1)
     except Exception as e:
@@ -144,9 +144,22 @@ def package_anykernel(version_string, ksu_enabled=False):
         else:
             print(f"Warning: Source file not found: {src}")
 
-    timestamp = datetime.now().strftime("%Y%a%b%d-%H%M%S")
-    ver_tag = version_string if version_string else "Unknown-Kernel"
-    zip_name = f"{ver_tag}-{timestamp}.zip"
+    zip_name = None
+    if version_string:
+        match = re.search(r"^(\S+).*?(\w{3})\s+(\w{3})\s+(\d{1,2})\s+(\d{2}:\d{2}:\d{2}).*$", version_string)
+        if match:
+            kernel_version = match.group(1).replace("-dirty", "")
+            day_week = match.group(2)
+            month = match.group(3)
+            day_num = match.group(4)
+            time_str = match.group(5).replace(":", "")
+            zip_name = f"{kernel_version}-{day_week}{month}{day_num}-{time_str}.zip"
+
+    if not zip_name:
+        timestamp = datetime.now().strftime("%Y%a%b%d-%H%M%S")
+        ver_tag = version_string.split()[0] if version_string else "Unknown-Kernel"
+        zip_name = f"{ver_tag}-{timestamp}.zip"
+
     if ksu_enabled:
         zip_name = f"KSU-{zip_name}"
 
