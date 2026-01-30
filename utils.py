@@ -7,14 +7,24 @@ import base64
 import requests
 import signal
 import subprocess
+import re
 import concurrent.futures
 from dotenv import load_dotenv
 
 # Load configs from .env file
 load_dotenv("config.env")
-BOT_TOKEN = os.environ.get("CONFIG_BOT_TOKEN")
-CHAT_ID = os.environ.get("CONFIG_CHATID")
-PD_API = os.environ.get("CONFIG_PDUP_API")
+
+
+class Config:
+    def __init__(self):
+        self.BOT_TOKEN = os.environ.get("CONFIG_BOT_TOKEN")
+        self.CHAT_ID = os.environ.get("CONFIG_CHATID")
+        self.ERROR_CHAT_ID = os.environ.get("CONFIG_ERROR_CHATID", self.CHAT_ID)
+        self.PD_API = os.environ.get("CONFIG_PDUP_API")
+        self.USE_GOFILE = os.environ.get("CONFIG_GOFILE") == "true"
+
+
+config = Config()
 
 # Message templates for Telegram notifications
 MESSAGES = {
@@ -41,6 +51,179 @@ MESSAGES = {
 }
 
 
+def get_jobs_flag():
+    cpu_cores = os.cpu_count()
+    jobs_env = os.environ.get("CONFIG_JOBS")
+    return f"-j{jobs_env}" if jobs_env else (f"-j{cpu_cores}" if cpu_cores else "-j4")
+
+
+def get_sync_jobs():
+    cpu_cores = os.cpu_count()
+    jobs_env = os.environ.get("CONFIG_JOBS")
+    return jobs_env if jobs_env else (str(cpu_cores) if cpu_cores else "4")
+
+
+class BuildRunner:
+    def __init__(self, build_cmd, base_info, log_file="build.log", is_rom=False):
+        self.build_cmd = build_cmd
+        self.base_info = base_info
+        self.log_file = log_file
+        self.is_rom = is_rom
+        self.process = None
+        self.msg_id = None
+
+    def run(self):
+        register_signal_handler(lambda: self.process)
+        self.msg_id = send_msg(MESSAGES["build_start"].format(base_info=self.base_info))
+
+        start_time = time.time()
+        with open(self.log_file, "w") as log:
+            self.process = subprocess.Popen(
+                self.build_cmd,
+                shell=self.is_rom,
+                executable="/bin/bash" if self.is_rom else None,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+            )
+
+            last_update = 0
+            ninja_started = not self.is_rom
+            regex = re.compile(r"\[\s*(\d+%)\s+(\d+/\d+)(?: (.*?remaining))?.*\]")
+
+            try:
+                for line_out in self.process.stdout:
+                    sys.stdout.write(line_out)
+                    log.write(line_out)
+
+                    if self.is_rom:
+                        if "Starting ninja..." in line_out:
+                            ninja_started = True
+
+                        match = regex.search(line_out)
+                        if match and ninja_started:
+                            pct, cnt, time_left = match.groups()
+                            now = time.time()
+                            if now - last_update > 15:
+                                elapsed_str = fmt_time(now - start_time)
+                                stats_str = (
+                                    f"<b>Progress:</b> <code>{pct} ({cnt})</code>\n"
+                                )
+                                if time_left:
+                                    clean_time = time_left.replace(
+                                        " remaining", ""
+                                    ).strip()
+                                    stats_str += (
+                                        f"<b>Remaining:</b> <code>{clean_time}</code>\n"
+                                    )
+                                stats_str += (
+                                    f"<b>Elapsed:</b> <code>{elapsed_str}</code>"
+                                )
+                                edit_msg(
+                                    self.msg_id,
+                                    MESSAGES["build_progress"].format(
+                                        stats=stats_str, base_info=self.base_info
+                                    ),
+                                )
+                                last_update = now
+                    else:
+                        now = time.time()
+                        if now - last_update > 15:
+                            elapsed = fmt_time(now - start_time)
+                            stats_str = f"<b>Elapsed:</b> <code>{elapsed}</code>"
+                            edit_msg(
+                                self.msg_id,
+                                MESSAGES["build_progress"].format(
+                                    stats=stats_str, base_info=self.base_info
+                                ),
+                            )
+                            last_update = now
+
+                return_code = self.process.wait()
+            except Exception as e:
+                print(f"Build Loop Error: {e}")
+                return_code = 1
+
+        total_duration = fmt_time(time.time() - start_time)
+
+        if return_code != 0:
+            edit_msg(
+                self.msg_id,
+                MESSAGES["build_fail"].format(
+                    time=total_duration, base_info=self.base_info
+                ),
+            )
+            error_log = (
+                "out/error.log"
+                if self.is_rom and os.path.exists("out/error.log")
+                else self.log_file
+            )
+            send_doc(error_log, config.ERROR_CHAT_ID)
+            sys.exit(1)
+
+        final_build_msg = MESSAGES["build_success"].format(
+            time=total_duration, base_info=self.base_info
+        )
+        edit_msg(self.msg_id, MESSAGES["uploading"].format(build_msg=final_build_msg))
+        return final_build_msg, self.msg_id
+
+
+def upload_artifacts(final_build_msg, msg_id, files_to_upload, final_zip):
+    upload_start = time.time()
+    buttons_list = []
+    main_file_uploaded = False
+
+    for label, file_path in files_to_upload:
+        if not file_path or not os.path.exists(file_path):
+            continue
+
+        print(f"Uploading {label} ({os.path.basename(file_path)})...")
+        uploads = upload_all(file_path, config.USE_GOFILE)
+
+        current_row = []
+        if uploads["pd"]:
+            current_row.append({"text": f"{label} (PD)", "url": uploads["pd"]})
+            if file_path == final_zip:
+                main_file_uploaded = True
+
+        if uploads["gf"]:
+            current_row.append({"text": f"{label} (GF)", "url": uploads["gf"]})
+            if file_path == final_zip:
+                main_file_uploaded = True
+
+        if current_row:
+            buttons_list.append(current_row)
+
+    upload_duration = fmt_time(time.time() - upload_start)
+
+    if not main_file_uploaded:
+        edit_msg(
+            msg_id,
+            MESSAGES["upload_fail"].format(
+                build_msg=final_build_msg, reason="Could not upload files."
+            ),
+        )
+        return
+
+    md5 = get_md5(final_zip)
+    size_mb = os.path.getsize(final_zip) / (1024 * 1024)
+    size_str = f"{size_mb:.2f} MB"
+    file_name = os.path.basename(final_zip)
+
+    edit_msg(
+        msg_id,
+        MESSAGES["final_msg"].format(
+            build_msg=final_build_msg,
+            up_time=upload_duration,
+            filename=file_name,
+            size=size_str,
+            md5=md5,
+        ),
+        buttons=buttons_list if buttons_list else None,
+    )
+
+
 # Formatting
 def fmt_time(seconds):
     seconds = int(seconds)
@@ -65,11 +248,11 @@ def get_md5(file_path):
 
 # Telegram API
 def tg_req(method, data, files=None, retries=3):
-    if not BOT_TOKEN:
+    if not config.BOT_TOKEN:
         print("Error: BOT_TOKEN missing in utils.")
         return {}
 
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/{method}"
+    url = f"https://api.telegram.org/bot{config.BOT_TOKEN}/{method}"
     for attempt in range(retries):
         try:
             r = requests.post(url, data=data, files=files, timeout=30)
@@ -96,21 +279,21 @@ def _get_tg_payload(chat_id, text, buttons=None, msg_id=None):
     return data
 
 
-def send_msg(text, chat_id=CHAT_ID, buttons=None):
+def send_msg(text, chat_id=config.CHAT_ID, buttons=None):
     if not chat_id:
         return None
     data = _get_tg_payload(chat_id, text, buttons)
     return tg_req("sendMessage", data).get("result", {}).get("message_id")
 
 
-def edit_msg(msg_id, text, chat_id=CHAT_ID, buttons=None):
+def edit_msg(msg_id, text, chat_id=config.CHAT_ID, buttons=None):
     if not msg_id or not chat_id:
         return
     data = _get_tg_payload(chat_id, text, buttons, msg_id)
     tg_req("editMessageText", data)
 
 
-def send_doc(file_path, chat_id=CHAT_ID):
+def send_doc(file_path, chat_id=config.CHAT_ID):
     if not chat_id:
         return
     if os.path.exists(file_path):
@@ -125,14 +308,14 @@ def send_doc(file_path, chat_id=CHAT_ID):
 # Upload for PixelDrain
 def upload_pd(path):
     print(f"Uploading to PixelDrain: {path}")
-    if not PD_API:
+    if not config.PD_API:
         print("PixelDrain API key missing.")
         return None
 
     file_name = os.path.basename(path)
     url = f"https://pixeldrain.com/api/file/{file_name}"
 
-    auth_str = f":{PD_API}"
+    auth_str = f":{config.PD_API}"
     auth_bytes = auth_str.encode("ascii")
     base64_auth = base64.b64encode(auth_bytes).decode("ascii")
 
@@ -174,6 +357,7 @@ def upload_gofile(path):
     except Exception as e:
         print(f"GoFile Upload Error: {e}")
         return None
+
 
 # Performs simultaneous uploads
 def upload_all(path, use_gofile=False):

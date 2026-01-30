@@ -8,29 +8,21 @@ import argparse
 import utils
 
 # Load config variables
-BOT_TOKEN = os.environ.get("CONFIG_BOT_TOKEN")
-CHAT_ID = os.environ.get("CONFIG_CHATID")
-ERROR_CHAT_ID = os.environ.get("CONFIG_ERROR_CHATID", CHAT_ID)
 DEVICE = os.environ.get("CONFIG_DEVICE")
 TARGET = os.environ.get("CONFIG_BUILD_TARGET")
 BUILD_VARIANT = os.environ.get("CONFIG_BUILD_TYPE")
-USE_GOFILE = os.environ.get("CONFIG_GOFILE") == "true"
 CUSTOM_COMMANDS = os.environ.get("CONFIG_ROM_CUSTOM_COMMANDS")
 REC_IMAGES = os.environ.get("CONFIG_RECOVERY_IMAGES")
 
-if not all([BOT_TOKEN, CHAT_ID, DEVICE, TARGET, BUILD_VARIANT]):
+if not all([utils.config.BOT_TOKEN, utils.config.CHAT_ID, DEVICE, TARGET, BUILD_VARIANT]):
     print("ERROR: Missing configuration (BOT_TOKEN, CHATID, DEVICE, TARGET, or TYPE).")
     sys.exit(1)
 
-cpu_cores = os.cpu_count()
-jobs_env = os.environ.get("CONFIG_JOBS")
-JOBS_FLAG = f"-j{jobs_env}" if jobs_env else (f"-j{cpu_cores}" if cpu_cores else "")
-SYNC_JOBS = jobs_env if jobs_env else (str(cpu_cores) if cpu_cores else "4")
+JOBS_FLAG = utils.get_jobs_flag()
+SYNC_JOBS = utils.get_sync_jobs()
 
 current_folder = os.getcwd().split("/")[-1]
 ROM_NAME = os.environ.get("CONFIG_ROM_NAME") or current_folder or "Unknown ROM"
-
-BUILD_PROCESS = None
 
 
 def get_build_vars():
@@ -58,14 +50,10 @@ def get_build_vars():
 
 
 def main():
-    global BUILD_PROCESS
-
-    utils.register_signal_handler(lambda: BUILD_PROCESS)
-
     parser = argparse.ArgumentParser()
     parser.add_argument("-s", "--sync", action="store_true")
     parser.add_argument("-c", "--clean", action="store_true")
-    args = parser.parse_args()
+    args = parser.args
 
     # Sync sources if requested
     if args.sync:
@@ -105,107 +93,21 @@ def main():
         f"<b>Type:</b> <code>{REAL_VARIANT}</code>"
     )
 
-    msg_id = utils.send_msg(utils.MESSAGES["build_start"].format(base_info=base_info))
-
     build_cmd = f"source build/envsetup.sh && breakfast {DEVICE} {BUILD_VARIANT}"
     if CUSTOM_COMMANDS:
         build_cmd += f" && {CUSTOM_COMMANDS}"
     build_cmd += f" && m {TARGET} {JOBS_FLAG}"
     print(f"Cmd: {build_cmd}")
 
-    log_file = open("build.log", "w")
-    start_time = time.time()
-
-    # Start build process
-    BUILD_PROCESS = subprocess.Popen(
-        build_cmd,
-        shell=True,
-        executable="/bin/bash",
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        bufsize=1,
-    )
-
-    regex = re.compile(r"\[\s*(\d+%)\s+(\d+/\d+)(?: (.*?remaining))?.*\]")
-    last_update = 0
-    ninja_started = False
-    detected_zip = None
-
-    # Monitor build output
-    try:
-        for log_line in BUILD_PROCESS.stdout:
-            sys.stdout.write(log_line)
-            log_file.write(log_line)
-
-            if "Package Complete:" in log_line:
-                detected_zip = log_line.split("Package Complete:")[1].strip().split()[0]
-
-            if "Starting ninja..." in log_line:
-                ninja_started = True
-
-            match = regex.search(log_line)
-            if match and ninja_started:
-                pct, cnt, time_left = match.groups()
-                now = time.time()
-
-                if now - last_update > 15:
-                    elapsed_str = utils.fmt_time(now - start_time)
-
-                    # Build Stats
-                    stats_str = f"<b>Progress:</b> <code>{pct} ({cnt})</code>\n"
-                    if time_left:
-                        clean_time = time_left.replace(" remaining", "").strip()
-                        stats_str += f"<b>Remaining:</b> <code>{clean_time}</code>\n"
-                    stats_str += f"<b>Elapsed:</b> <code>{elapsed_str}</code>"
-
-                    utils.edit_msg(
-                        msg_id,
-                        utils.MESSAGES["build_progress"].format(
-                            stats=stats_str, base_info=base_info
-                        ),
-                    )
-                    last_update = now
-
-        return_code = BUILD_PROCESS.wait()
-
-    except Exception as e:
-        print(f"Build Loop Error: {e}")
-        return_code = 1
-    finally:
-        log_file.close()
-
-    total_duration = utils.fmt_time(time.time() - start_time)
-
-    # Build failure
-    if return_code != 0:
-        utils.edit_msg(
-            msg_id,
-            utils.MESSAGES["build_fail"].format(
-                time=total_duration, base_info=base_info
-            ),
-        )
-        err_log = "out/error.log" if os.path.exists("out/error.log") else "build.log"
-        utils.send_doc(err_log, ERROR_CHAT_ID)
-        sys.exit(1)
-
-    # Build success
-    final_build_msg = utils.MESSAGES["build_success"].format(
-        time=total_duration, base_info=base_info
-    )
-    utils.edit_msg(
-        msg_id, utils.MESSAGES["uploading"].format(build_msg=final_build_msg)
-    )
+    runner = utils.BuildRunner(build_cmd, base_info, is_rom=True)
+    final_build_msg, msg_id = runner.run()
 
     # Locate/Prepare artifacts
     out_dir = f"out/target/product/{DEVICE}"
     final_zip = None
-    if detected_zip and os.path.exists(detected_zip):
-        final_zip = detected_zip
-    else:
-        zips = glob.glob(f"{out_dir}/*{DEVICE}*.zip")
-        if zips:
-            final_zip = max(zips, key=os.path.getctime)
+    zips = glob.glob(f"{out_dir}/*{DEVICE}*.zip")
+    if zips:
+        final_zip = max(zips, key=os.path.getctime)
 
     if not final_zip:
         utils.edit_msg(
@@ -236,8 +138,6 @@ def main():
                 rec_zip_path = rec_name
 
     # Upload files
-    upload_start = time.time()
-
     files_to_upload = [("Download", final_zip)]
     if rec_zip_path:
         files_to_upload.append(("Recovery", rec_zip_path))
@@ -246,57 +146,7 @@ def main():
     if json_f:
         files_to_upload.append(("JSON", json_f[0]))
 
-    buttons_list = []
-    main_file_uploaded = False
-
-    for label, file_path in files_to_upload:
-        if not file_path or not os.path.exists(file_path):
-            continue
-
-        print(f"Uploading {label} ({os.path.basename(file_path)})...")
-        uploads = utils.upload_all(file_path, USE_GOFILE)
-
-        current_row = []
-
-        if uploads["pd"]:
-            current_row.append({"text": f"{label} (PD)", "url": uploads["pd"]})
-            if file_path == final_zip:
-                main_file_uploaded = True
-
-        if uploads["gf"]:
-            current_row.append({"text": f"{label} (GF)", "url": uploads["gf"]})
-            if file_path == final_zip:
-                main_file_uploaded = True
-
-        if current_row:
-            buttons_list.append(current_row)
-
-    upload_duration = utils.fmt_time(time.time() - upload_start)
-
-    md5 = utils.get_md5(final_zip)
-    size_mb = os.path.getsize(final_zip) / (1024 * 1024)
-    size_str = f"{size_mb:.2f} MB"
-    file_name = os.path.basename(final_zip)
-
-    if main_file_uploaded:
-        utils.edit_msg(
-            msg_id,
-            utils.MESSAGES["final_msg"].format(
-                build_msg=final_build_msg,
-                up_time=upload_duration,
-                filename=file_name,
-                size=size_str,
-                md5=md5,
-            ),
-            buttons=buttons_list if buttons_list else None,
-        )
-    else:
-        utils.edit_msg(
-            msg_id,
-            utils.MESSAGES["upload_fail"].format(
-                build_msg=final_build_msg, reason="Could not upload files."
-            ),
-        )
+    utils.upload_artifacts(final_build_msg, msg_id, files_to_upload, final_zip)
 
 
 if __name__ == "__main__":

@@ -1,6 +1,5 @@
 import os
 import sys
-import time
 import subprocess
 import shutil
 import argparse
@@ -9,30 +8,21 @@ from datetime import datetime
 import utils
 
 # Load config variables
-BOT_TOKEN = os.environ.get("CONFIG_BOT_TOKEN")
-CHAT_ID = os.environ.get("CONFIG_CHATID")
-ERROR_CHAT_ID = os.environ.get("CONFIG_ERROR_CHATID", CHAT_ID)
 DEFCONFIG = os.environ.get("CONFIG_DEFCONFIG")
 AK3_REPO = os.environ.get("CONFIG_AK3_REPO")
-USE_GOFILE = os.environ.get("CONFIG_GOFILE") == "true"
 KSU_URL = os.environ.get("CONFIG_KSU_URL", "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh")
 CUSTOM_COMMANDS = os.environ.get("CONFIG_KERNEL_CUSTOM_COMMANDS")
 
-if not all([BOT_TOKEN, CHAT_ID, DEFCONFIG]):
+if not all([utils.config.BOT_TOKEN, utils.config.CHAT_ID, DEFCONFIG]):
     print("ERROR: Missing configuration (BOT_TOKEN, CHATID, or DEFCONFIG).")
     sys.exit(1)
 
-cpu_cores = os.cpu_count()
-jobs_env = os.environ.get("CONFIG_JOBS")
-JOBS_FLAG = f"-j{jobs_env}" if jobs_env else (f"-j{cpu_cores}" if cpu_cores else "-j4")
-DISPLAY_JOBS = jobs_env if jobs_env else (f"{cpu_cores} (All)" if cpu_cores else "4")
+JOBS_FLAG = utils.get_jobs_flag()
+DISPLAY_JOBS = JOBS_FLAG.replace("-j", "")
 
 KERNEL_OUT = "out/arch/arm64/boot"
 ANYKERNEL_DIR = "AnyKernel3"
 LOG_FILE = "build.log"
-
-BUILD_PROCESS = None
-
 
 def get_git_head():
     try:
@@ -189,9 +179,6 @@ def package_anykernel(version_string, ksu_enabled=False):
 
 
 def main():
-    global BUILD_PROCESS
-    utils.register_signal_handler(lambda: BUILD_PROCESS)
-
     parser = argparse.ArgumentParser()
     parser.add_argument("-c", "--clean", action="store_true")
     parser.add_argument("--ksu", action="store_true", help="Enable KernelSU support")
@@ -221,8 +208,6 @@ def main():
         f"{utils.line('Jobs', DISPLAY_JOBS)}\n"
         f"{utils.line('Compiler', compiler_ver)}"
     )
-
-    msg_id = utils.send_msg(utils.MESSAGES["build_start"].format(base_info=base_info))
 
     # Configure the output
     cmd_config = ["make", "O=out", "ARCH=arm64", "LLVM=1"] + DEFCONFIG.split()
@@ -257,74 +242,8 @@ def main():
     ]
     print(f"Building: {' '.join(build_cmd)}")
 
-    start_time = time.time()
-    log_file = open(LOG_FILE, "w")
-
-    # Start build process
-    BUILD_PROCESS = subprocess.Popen(
-        build_cmd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        bufsize=1,
-    )
-
-    last_update = 0
-
-    # Monitor build output
-    try:
-        while True:
-            line_out = BUILD_PROCESS.stdout.readline()
-            if not line_out and BUILD_PROCESS.poll() is not None:
-                break
-            if not line_out:
-                time.sleep(0.1)
-                continue
-
-            log_file.write(line_out)
-
-            now = time.time()
-            if now - last_update > 15:
-                elapsed = utils.fmt_time(now - start_time)
-                stats_str = f"<b>Elapsed:</b> <code>{elapsed}</code>"
-                utils.edit_msg(
-                    msg_id,
-                    utils.MESSAGES["build_progress"].format(
-                        stats=stats_str, base_info=base_info
-                    ),
-                )
-                last_update = now
-
-        return_code = BUILD_PROCESS.poll()
-        if return_code is None:
-            return_code = BUILD_PROCESS.wait()
-
-    except Exception as e:
-        print(f"Build Loop Error: {e}")
-        return_code = 1
-    finally:
-        log_file.close()
-
-    total_duration = utils.fmt_time(time.time() - start_time)
-
-    # Build failure
-    if return_code != 0:
-        utils.edit_msg(
-            msg_id,
-            utils.MESSAGES["build_fail"].format(
-                time=total_duration, base_info=base_info
-            ),
-        )
-        utils.send_doc(LOG_FILE, ERROR_CHAT_ID)
-        sys.exit(1)
-
-    # Build success
-    final_build_msg = utils.MESSAGES["build_success"].format(
-        time=total_duration, base_info=base_info
-    )
-    utils.edit_msg(
-        msg_id, utils.MESSAGES["uploading"].format(build_msg=final_build_msg)
-    )
+    runner = utils.BuildRunner(build_cmd, base_info, LOG_FILE)
+    final_build_msg, msg_id = runner.run()
 
     # Package
     compiled_ver_str = get_compiled_version_string()
@@ -340,56 +259,8 @@ def main():
         sys.exit(1)
 
     # Upload files
-    upload_start = time.time()
     files_to_upload = [("Download", final_zip)]
-
-    buttons_list = []
-    main_file_uploaded = False
-
-    for label, file_path in files_to_upload:
-        if not file_path or not os.path.exists(file_path):
-            continue
-
-        print(f"Uploading {label} ({os.path.basename(file_path)})...")
-        uploads = utils.upload_all(file_path, USE_GOFILE)
-
-        if uploads["pd"]:
-            buttons_list.append({"text": f"{label} (PD)", "url": uploads["pd"]})
-            if file_path == final_zip:
-                main_file_uploaded = True
-
-        if uploads["gf"]:
-            buttons_list.append({"text": f"{label} (GF)", "url": uploads["gf"]})
-            if file_path == final_zip:
-                main_file_uploaded = True
-
-    upload_duration = utils.fmt_time(time.time() - upload_start)
-
-    md5 = utils.get_md5(final_zip)
-    size_mb = os.path.getsize(final_zip) / (1024 * 1024)
-    size_str = f"{size_mb:.2f} MB"
-    file_name = os.path.basename(final_zip)
-
-    if main_file_uploaded:
-        utils.edit_msg(
-            msg_id,
-            utils.MESSAGES["final_msg"].format(
-                build_msg=final_build_msg,
-                up_time=upload_duration,
-                filename=file_name,
-                size=size_str,
-                md5=md5,
-            ),
-            buttons=[buttons_list] if buttons_list else None,
-        )
-    else:
-        utils.edit_msg(
-            msg_id,
-            utils.MESSAGES["upload_fail"].format(
-                build_msg=final_build_msg, reason="Could not upload files."
-            ),
-        )
-
+    utils.upload_artifacts(final_build_msg, msg_id, files_to_upload, final_zip)
 
 if __name__ == "__main__":
     main()
